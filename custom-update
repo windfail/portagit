@@ -1,0 +1,93 @@
+#!/bin/bash
+
+LIST=/tmp/cust_list
+ADDLIST=/tmp/add_list
+DEVBRANCH=yily
+CONFDIR=/etc
+
+show_help ()
+{
+    echo " -k : check if ._cfg config files are managed in git"
+    echo " -u : update etc with ._cfg files and custom changes"
+}
+find_modifies ()
+{
+   	WORKDIR=$(pwd)
+	cd $CONFDIR
+	git log --name-status master > $LIST
+        for file in $(find $CONFDIR -name '._cfg*') ; do
+            PREFIX_DIR=$(dirname $file)
+            CFGNAME=$(basename $file)
+            FILE=${PREFIX_DIR:5}/${CFGNAME:10}
+	    FILE=${FILE#/}
+	    if ! grep $FILE $LIST ;then
+	        echo "$FILE not in modify branch"
+		echo "$FILE" >> $ADDLIST
+	    fi
+        done
+	cd $WORKDIR
+}
+
+rm $LIST
+rm $ADDLIST
+case "$1" in
+    "-a" )
+        CFGFILE=$1
+        FILE=${CFGFILE:5}
+	cd $CONFDIR
+	cp $CFGFILE /tmp/$CFGFILE.bak
+	git checkout master
+	cp $NEWFILE $FILE
+	git add $FILE
+	git commit -m "add $FILE"
+	git checkout $DEVBRANCH
+	cp /tmp/$CFGFILE.bak $CFGFILE
+	git add $FILE
+	git commit -m "modify $FILE"
+        ;;
+    "-k" )
+    	find_modifies
+        ;;
+    "-u" )
+        git stash
+    	find_modifies
+        WORKDIR=$(pwd)
+	cd $CONFDIR
+	while read name ; do
+		mkdir -p custom_bak/$(dirname $name)
+		cp $name custom_bak/$name
+		git add -f $name
+	done < $ADDLIST
+	git commit -m "add modify files for merge"
+	if [ $? -ne 0 ] ;then
+	    exit
+	fi
+	git checkout master 
+	if [ $? -ne 0 ] ;then
+	    exit
+	fi
+        while read name ; do
+            git checkout yily $name
+        done < $ADDLIST
+	etc-update --automode -5
+	while read name ; do
+	    git add -f $name
+	done < $ADDLIST
+	git commit -a -m "add new origin files"
+	if [ $? -ne 0 ] ;then
+	    exit
+	fi
+	git checkout $DEVBRANCH
+	if [ $? -ne 0 ] ;then
+	    exit
+	fi
+	git merge master
+	if [ $? -ne 0 ] ;then
+	    exit
+	fi
+	git stash pop
+    	;;
+    * )
+        show_help
+        ;;
+esac
