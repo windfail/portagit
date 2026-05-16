@@ -170,7 +170,40 @@ do_update()
 
     git checkout "$DEVBRANCH" || die "cannot checkout $DEVBRANCH"
 
-    if git merge --allow-unrelated-histories "$MASTER_BRANCH"; then
+    local merge_success=true
+    if ! git merge --allow-unrelated-histories "$MASTER_BRANCH"; then
+        merge_success=false
+    fi
+
+    if [[ -f /etc/sudoers ]] && [[ -f "$BACKUP_DIR/sudoers" ]] && ! visudo -cf /etc/sudoers; then
+        echo ""
+        echo "=========================================="
+        echo "  WARNING: sudoers 语法错误！自动恢复备份"
+        echo "=========================================="
+        cp "$BACKUP_DIR/sudoers" /etc/sudoers
+        echo "已从备份恢复 /etc/sudoers"
+        echo "上游新版本保存在: $BACKUP_DIR/sudoers"
+        echo ""
+        echo "请手动对比合并后执行:"
+        echo "  visudo  # 编辑确认语法正确"
+        merge_success=false
+    fi
+
+    for sdf in /etc/sudoers.d/*; do
+        local sdf_name="${sdf#/etc/}"
+        if [[ -f "$sdf" ]] && [[ -f "$BACKUP_DIR/$sdf_name" ]] && ! visudo -cf "$sdf"; then
+            echo ""
+            echo "=========================================="
+            echo "  WARNING: $sdf_name 语法错误！自动恢复备份"
+            echo "=========================================="
+            cp "$BACKUP_DIR/$sdf_name" "$sdf"
+            echo "已从备份恢复 $sdf"
+            echo "上游新版本保存在: $BACKUP_DIR/$sdf_name"
+            merge_success=false
+        fi
+    done
+
+    if $merge_success; then
         echo "Merge completed successfully."
     else
         echo ""
