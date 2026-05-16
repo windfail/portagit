@@ -1,93 +1,219 @@
 #!/bin/bash
 
-LIST=/tmp/cust_list
-ADDLIST=/tmp/add_list
+set -euo pipefail
+
+LIST=/tmp/portagit_list
+ADDLIST=/tmp/portagit_addlist
+MASTER_BRANCH=master
 DEVBRANCH=yily
 CONFDIR=/etc
+BACKUP_DIR="$CONFDIR/custom_bak"
 
-show_help ()
+cleanup()
 {
-    echo " -k : check if ._cfg config files are managed in git"
-    echo " -u : update etc with ._cfg files and custom changes"
+    if [[ -f "$LIST" ]]; then
+        rm -f "$LIST"
+    fi
+    if [[ -f "$ADDLIST" ]]; then
+        rm -f "$ADDLIST"
+    fi
 }
-find_modifies ()
+
+die()
 {
-   	WORKDIR=$(pwd)
-	cd $CONFDIR
-	git log --name-status master > $LIST
-        for file in $(find $CONFDIR -name '._cfg*') ; do
-            PREFIX_DIR=$(dirname $file)
-            CFGNAME=$(basename $file)
-            FILE=${PREFIX_DIR:5}/${CFGNAME:10}
-	    FILE=${FILE#/}
-	    if ! grep $FILE $LIST ;then
-	        echo "$FILE not in modify branch"
-		echo "$FILE" >> $ADDLIST
-	    fi
+    echo "error: $*" >&2
+    cleanup
+    exit 1
+}
+
+show_help()
+{
+    echo "Usage: $(basename "$0") [OPTION]"
+    echo ""
+    echo "Options:"
+    echo "  -k          check ._cfg config files status"
+    echo "  -u          update etc with ._cfg files and custom changes"
+    echo "  -a <file>   manually add a ._cfg file to both branches"
+    echo "  -h          show this help"
+}
+
+find_cfg_files()
+{
+    rm -f "$ADDLIST"
+    WORKDIR=$(pwd)
+    cd "$CONFDIR" || die "cannot cd to $CONFDIR"
+
+    while IFS= read -r -d '' cfgfile; do
+        PREFIX_DIR=$(dirname "$cfgfile")
+        CFGNAME=$(basename "$cfgfile")
+        FILE="${PREFIX_DIR:5}/${CFGNAME:10}"
+        FILE="${FILE#/}"
+        if [[ -z "$FILE" ]]; then
+            continue
+        fi
+        echo "$FILE" >> "$ADDLIST"
+        echo "  found: $FILE (from $CFGNAME)"
+    done < <(find "$CONFDIR" -name '._cfg*' -print0)
+
+    cd "$WORKDIR" || true
+
+    if [[ ! -f "$ADDLIST" || ! -s "$ADDLIST" ]]; then
+        echo "No ._cfg files found."
+        return 1
+    fi
+    return 0
+}
+
+do_add()
+{
+    local cfgfile="$1"
+    if [[ ! -f "$cfgfile" ]]; then
+        die "file not found: $cfgfile"
+    fi
+
+    local cfgname
+    cfgname=$(basename "$cfgfile")
+    local prefix_dir
+    prefix_dir=$(dirname "$cfgfile")
+    local file="${prefix_dir:5}/${cfgname:10}"
+    file="${file#/}"
+
+    if [[ -z "$file" ]]; then
+        die "cannot extract target filename from $cfgfile"
+    fi
+
+    cd "$CONFDIR" || die "cannot cd to $CONFDIR"
+
+    cp "$cfgfile" "/tmp/${cfgname}.bak" || die "backup failed"
+
+    git checkout "$MASTER_BRANCH" || die "cannot checkout $MASTER_BRANCH"
+    cp "/tmp/${cfgname}.bak" "$file" || die "cannot copy to $file on $MASTER_BRANCH"
+    git add -f "$file" || die "cannot add $file on $MASTER_BRANCH"
+    git commit -m "add $file" || die "cannot commit on $MASTER_BRANCH"
+
+    git checkout "$DEVBRANCH" || die "cannot checkout $DEVBRANCH"
+    cp "/tmp/${cfgname}.bak" "$cfgfile" || die "cannot restore $cfgfile"
+    git add -f "$file" || die "cannot add $file on $DEVBRANCH"
+    git commit -m "modify $file" || die "cannot commit on $DEVBRANCH"
+
+    rm -f "/tmp/${cfgname}.bak"
+    echo "Added $file to both branches."
+}
+
+do_check()
+{
+    echo "Checking ._cfg files in $CONFDIR..."
+    if find_cfg_files; then
+        echo ""
+        echo "Files needing update:"
+        sort -u "$ADDLIST"
+    fi
+    cleanup
+}
+
+do_update()
+{
+    cd "$CONFDIR" || die "cannot cd to $CONFDIR"
+
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo "Committing uncommitted changes..."
+        git add -A || die "git add failed"
+        git commit -m "auto commit before merge" || die "git commit failed"
+    fi
+
+    if ! find_cfg_files; then
+        echo "Nothing to update."
+        cleanup
+        return
+    fi
+
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD)
+    if [[ "$current_branch" != "$DEVBRANCH" ]]; then
+        die "not on $DEVBRANCH branch (current: $current_branch)"
+    fi
+
+    mkdir -p "$BACKUP_DIR"
+    while IFS= read -r name; do
+        mkdir -p "$BACKUP_DIR/$(dirname "$name")"
+        cp "$name" "$BACKUP_DIR/$name" || die "backup failed for $name"
+    done < "$ADDLIST"
+    echo "User configs backed up to $BACKUP_DIR"
+
+    while IFS= read -r name; do
+        git add -f "$name" || die "cannot add $name on $DEVBRANCH"
+    done < "$ADDLIST"
+    if ! git diff --cached --quiet; then
+        git commit -m "save user modifications before merge" || die "commit failed on $DEVBRANCH"
+    fi
+
+    git checkout "$MASTER_BRANCH" || die "cannot checkout $MASTER_BRANCH"
+
+    while IFS= read -r name; do
+        git checkout "$DEVBRANCH" -- "$name" || die "cannot checkout $name from $DEVBRANCH"
+    done < "$ADDLIST"
+
+    etc-update --automode -5 || die "etc-update failed"
+
+    while IFS= read -r name; do
+        git add -f "$name" || die "cannot add $name on $MASTER_BRANCH"
+    done < "$ADDLIST"
+    if ! git diff --cached --quiet; then
+        git commit -m "update with new upstream configs" || die "commit failed on $MASTER_BRANCH"
+    fi
+
+    git checkout "$DEVBRANCH" || die "cannot checkout $DEVBRANCH"
+
+    if git merge --allow-unrelated-histories "$MASTER_BRANCH"; then
+        echo "Merge completed successfully."
+    else
+        echo ""
+        echo "=========================================="
+        echo "  Merge conflicts detected!"
+        echo "  Please resolve conflicts in the files"
+        echo "  listed above, then run:"
+        echo ""
+        echo "    git add -A"
+        echo "    git commit"
+        echo ""
+        echo "  Your original configs are backed up in:"
+        echo "    $BACKUP_DIR"
+        echo "=========================================="
+        cleanup
+        return
+    fi
+
+    while IFS= read -r name; do
+        local cfg_prefix_dir
+        cfg_prefix_dir=$(dirname "$name")
+        for cfg in "$CONFDIR/$cfg_prefix_dir"/._cfg*; do
+            [[ -f "$cfg" ]] && rm -f "$cfg" && echo "Cleaned up $(basename "$cfg")"
         done
-	cd $WORKDIR
+    done < "$ADDLIST"
+
+    echo ""
+    echo "Update complete. ._cfg files cleaned up."
+    cleanup
 }
 
-rm $LIST
-rm $ADDLIST
-case "$1" in
+cleanup
+
+case "${1:-}" in
     "-a" )
-        CFGFILE=$1
-        FILE=${CFGFILE:5}
-	cd $CONFDIR
-	cp $CFGFILE /tmp/$CFGFILE.bak
-	git checkout master
-	cp $NEWFILE $FILE
-	git add $FILE
-	git commit -m "add $FILE"
-	git checkout $DEVBRANCH
-	cp /tmp/$CFGFILE.bak $CFGFILE
-	git add $FILE
-	git commit -m "modify $FILE"
+        [[ -z "${2:-}" ]] && die "usage: $(basename "$0") -a <._cfg_file>"
+        do_add "$2"
         ;;
     "-k" )
-    	find_modifies
+        do_check
         ;;
     "-u" )
-        git stash
-    	find_modifies
-        WORKDIR=$(pwd)
-	cd $CONFDIR
-	while read name ; do
-		mkdir -p custom_bak/$(dirname $name)
-		cp $name custom_bak/$name
-		git add -f $name
-	done < $ADDLIST
-	git commit -m "add modify files for merge"
-	if [ $? -ne 0 ] ;then
-	    exit
-	fi
-	git checkout master 
-	if [ $? -ne 0 ] ;then
-	    exit
-	fi
-        while read name ; do
-            git checkout yily $name
-        done < $ADDLIST
-	etc-update --automode -5
-	while read name ; do
-	    git add -f $name
-	done < $ADDLIST
-	git commit -a -m "add new origin files"
-	if [ $? -ne 0 ] ;then
-	    exit
-	fi
-	git checkout $DEVBRANCH
-	if [ $? -ne 0 ] ;then
-	    exit
-	fi
-	git merge master
-	if [ $? -ne 0 ] ;then
-	    exit
-	fi
-	git stash pop
-    	;;
+        do_update
+        ;;
+    "-h"|"--help" )
+        show_help
+        ;;
     * )
         show_help
+        exit 1
         ;;
 esac
