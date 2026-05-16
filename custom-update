@@ -135,13 +135,17 @@ do_update()
 
     mkdir -p "$BACKUP_DIR"
     while IFS= read -r name; do
-        mkdir -p "$BACKUP_DIR/$(dirname "$name")"
-        cp "$name" "$BACKUP_DIR/$name" || die "backup failed for $name"
+        if [[ -f "$name" ]]; then
+            mkdir -p "$BACKUP_DIR/$(dirname "$name")"
+            cp "$name" "$BACKUP_DIR/$name" || die "backup failed for $name"
+        fi
     done < "$ADDLIST"
     echo "User configs backed up to $BACKUP_DIR"
 
     while IFS= read -r name; do
-        git add -f "$name" || die "cannot add $name on $DEVBRANCH"
+        if [[ -f "$name" ]]; then
+            git add -f "$name" || die "cannot add $name on $DEVBRANCH"
+        fi
     done < "$ADDLIST"
     if ! git diff --cached --quiet; then
         git commit -m "save user modifications before merge" || die "commit failed on $DEVBRANCH"
@@ -150,7 +154,9 @@ do_update()
     git checkout "$MASTER_BRANCH" || die "cannot checkout $MASTER_BRANCH"
 
     while IFS= read -r name; do
-        git checkout "$DEVBRANCH" -- "$name" || die "cannot checkout $name from $DEVBRANCH"
+        if [[ -f "$name" ]]; then
+            git checkout "$DEVBRANCH" -- "$name" || die "cannot checkout $name from $DEVBRANCH"
+        fi
     done < "$ADDLIST"
 
     etc-update --automode -5 || die "etc-update failed"

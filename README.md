@@ -98,16 +98,18 @@ Portage 更新 → /etc 下产生 ._cfg0000_xxx 候选文件
                          │
                          ▼
 ┌─ Step 2: 在 DEVBRANCH 提交用户修改 ─────────────┐
-│  备份用户配置文件到 custom_bak/                    │
-│  git add -f 并 commit                             │
+│  仅对已存在的文件：备份到 custom_bak/              │
+│  仅对已存在的文件：git add -f 并 commit            │
 │  目的：确保不在 git 管理中的文件更新保存到用户分支  │
+│  *全新配置文件跳过此步（xxx 不存在时）            │
 └──────────────────────────────────────────────────┘
                          │
                          ▼
 ┌─ Step 3: 切换到 master，恢复用户版本 ────────────┐
 │  git checkout master                              │
-│  git checkout DEVBRANCH -- $file                  │
+│  仅对已存在的文件：git checkout DEVBRANCH -- $file │
 │  目的：不在 git 管理的文件切换分支会丢失，从用户分支恢复
+│  *全新配置文件跳过此步（xxx 不存在时）            │
 └──────────────────────────────────────────────────┘
                          │
                          ▼
