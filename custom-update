@@ -180,12 +180,14 @@ do_update()
         echo "=========================================="
         echo "  WARNING: sudoers 语法错误！自动恢复备份"
         echo "=========================================="
+        cp /etc/sudoers /etc/sudoers.conflict
         cp "$BACKUP_DIR/sudoers" /etc/sudoers
+        echo "冲突版本已保存: /etc/sudoers.conflict"
         echo "已从备份恢复 /etc/sudoers"
-        echo "上游新版本保存在: $BACKUP_DIR/sudoers"
         echo ""
         echo "请手动对比合并后执行:"
-        echo "  visudo  # 编辑确认语法正确"
+        echo "  visudo -cf /etc/sudoers.conflict  # 检查语法"
+        echo "  确认无误后覆盖 /etc/sudoers"
         merge_success=false
     fi
 
@@ -196,9 +198,14 @@ do_update()
             echo "=========================================="
             echo "  WARNING: $sdf_name 语法错误！自动恢复备份"
             echo "=========================================="
+            cp "$sdf" "$sdf.conflict"
             cp "$BACKUP_DIR/$sdf_name" "$sdf"
+            echo "冲突版本已保存: $sdf.conflict"
             echo "已从备份恢复 $sdf"
-            echo "上游新版本保存在: $BACKUP_DIR/$sdf_name"
+            echo ""
+            echo "请手动对比合并后执行:"
+            echo "  visudo -cf $sdf.conflict  # 检查语法"
+            echo "  确认无误后覆盖 $sdf"
             merge_success=false
         fi
     done
