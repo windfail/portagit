@@ -1,179 +1,15 @@
 # portagit
 
-Gentoo `/etc` 配置文件管理工具，利用 git 双分支模型实现上游配置更新与用户自定义修改的合并，确保双方修改不丢失。
+portagit 是一组 Gentoo 系统相关的管理脚本，主要用于 `/etc` 配置文件版本化管理、Portage 系统更新自动化，以及 Btrfs snapshot 创建和保留策略清理。
 
-## 背景
+## 脚本
 
-Gentoo 的包管理器 Portage 在更新软件包时，不会直接覆盖 `/etc` 下用户已修改的配置文件，而是在同目录下生成 `._cfg0000_xxx` 候选文件（命名规则 `._cfgNNNN_原始文件名`）。用户需要手动决定如何处理这些更新。
-
-传统的 `etc-update` 或 `dispatch-conf` 工具缺乏版本管理能力，无法追溯配置的变更历史，也无法精确合并上游更新与用户修改。
-
-## 设计目标
-
-1. **保留上游原始版本** — 记录每次上游配置更新
-2. **保留用户修改** — 用户自定义的配置不丢失
-3. **精确合并** — 利用 git 三路合并，自动合并双方无冲突的修改
-4. **冲突可解** — 有冲突时给出清晰指引，用户手动解决
-5. **可追溯** — 所有配置变更均有 git 历史记录
-
-## 分支模型
-
-```
-master 分支（上游原始）  ──●──●──●──●  每次上游更新 ._cfg 出现时提交
-                          \
-DEVBRANCH 分支（用户）    ──●──●──●──●  用户自定义修改
-                                     │
-                          git merge master ← git 三路合并
-```
-
-| 分支 | 用途 | 内容 |
-|---|---|---|
-| `master` | 跟踪上游原始配置 | Gentoo 发行版默认配置 + `._cfg*` 更新后的版本 |
-| `DEVBRANCH`（默认 `yily`） | 跟踪用户自定义配置 | 用户修改后的配置文件 |
-
-## 合并原理
-
-核心流程利用 git 的三路合并（three-way merge）：
-
-```
-                    common ancestor（旧上游版本）
-                       /          \
-                      /            \
-              DEVBRANCH（用户修改）  master（新上游版本）
-                      \            /
-                       \          /
-                    merge result
-```
-
-- **base**：上次合并时的上游版本（common ancestor）
-- **ours**：用户在 DEVBRANCH 上的修改
-- **theirs**：master 上经过 `etc-update` 更新后的新上游版本
-
-git 能够自动合并双方对同一文件的不同区域的修改，仅在双方修改了同一行时才产生冲突。
-
-## 使用方式
-
-### 初始化
-
-将 `/etc` 初始化为 git 仓库并创建两个分支：
-
-```bash
-cd /etc
-git init
-git add -A
-git commit -m "initial state"
-git branch -m master          # 当前状态作为 master
-git checkout -b yily          # 创建用户分支
-```
-
-日常使用中保持在 `yily` 分支上，用户对 `/etc` 的修改直接提交到该分支。
-
-### 命令
-
-```
-custom-update [OPTION]
-
-Options:
-  -k            检查 ._cfg 文件状态
-  -u            执行更新合并
-  -a <file>     手动添加单个 ._cfg 文件到双分支
-  -h            显示帮助
-```
-
-## 核心流程
-
-### `-u` 模式：更新合并
-
-当 Portage 更新后在 `/etc` 下产生 `._cfg*` 文件时执行：
-
-```
-Portage 更新 → /etc 下产生 ._cfg0000_xxx 候选文件
-                        │
-                        ▼
-┌─ Step 1: 准备 ──────────────────────────────────┐
-│  检查是否有未提交修改，有则直接 git commit          │
-│  扫描所有 ._cfg* 文件，提取对应的目标文件名        │
-│  生成待处理文件列表                                │
-└──────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─ Step 2: 在 DEVBRANCH 提交用户修改 ─────────────┐
-│  仅对已存在的文件：备份到 custom_bak/              │
-│  仅对已存在的文件：git add -f 并 commit            │
-│  目的：确保不在 git 管理中的文件更新保存到用户分支  │
-│  *全新配置文件跳过此步（xxx 不存在时）            │
-└──────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─ Step 3: 切换到 master，恢复用户版本 ────────────┐
-│  git checkout master                              │
-│  仅对已存在的文件：git checkout DEVBRANCH -- $file │
-│  目的：不在 git 管理的文件切换分支会丢失，从用户分支恢复
-│  *全新配置文件跳过此步（xxx 不存在时）            │
-└──────────────────────────────────────────────────┘
-                         │
-                         ▼
-┌─ Step 4: 用 etc-update 应用 ._cfg 更新 ──────────┐
-│  etc-update --automode -5                         │
-│  将 ._cfg* 新版本替换旧文件                       │
-│  此时 master = Gentoo 官方上游版本                │
-│  git add -f 并 commit                             │
-└──────────────────────────────────────────────────┘
-                        │
-                        ▼
-┌─ Step 5: 合并回 DEVBRANCH ──────────────────────┐
-│  git checkout DEVBRANCH                           │
-│  git merge master                                 │
-│    → 无冲突: 自动合并完成                         │
-│    → 有冲突: 输出解决指引，用户手动处理            │
-└──────────────────────────────────────────────────┘
-                        │
-                        ▼
-┌─ Step 6: 收尾 ──────────────────────────────────┐
-│  清理 ._cfg* 候选文件                             │
-└──────────────────────────────────────────────────┘
-```
-
-### `-k` 模式：检查
-
-扫描 `/etc` 下所有 `._cfg*` 文件，列出需要处理的配置文件，不执行任何修改操作。
-
-### `-a` 模式：手动添加
-
-对单个 `._cfg*` 文件，分别提交到 `master` 和 `DEVBRANCH` 两个分支：
-
-1. 备份 `._cfg*` 文件
-2. 切换到 `master`，将 `._cfg*` 内容写入目标文件并提交
-3. 切换到 `DEVBRANCH`，恢复 `._cfg*` 文件并提交
-
-## 冲突处理
-
-当 `git merge master` 产生冲突时：
-
-1. 脚本输出冲突提示和解决指引
-2. 用户手动编辑冲突文件，移除 `<<<<<<` / `======` / `>>>>>>` 标记
-3. 执行 `git add -A && git commit` 完成合并
-4. 原始用户配置保存在 `custom_bak/` 目录中作为安全网
-
-## 安全机制
-
-| 机制 | 说明 |
-|---|---|
-| `custom_bak/` | 合并前备份用户原始配置文件 |
-| `自动提交` | 未提交修改直接 commit，确保不丢失 |
-| `sudoers 语法保护` | 合并后立即检查 sudoers 语法，错误自动回滚到备份 |
-| `set -euo pipefail` | 任何命令失败立即终止，防止部分执行导致状态不一致 |
-| `die()` | 统一错误处理，退出前清理临时文件 |
-| 分支检查 | 执行 `-u` 前验证当前在 DEVBRANCH 上 |
-
-## 配置变量
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `MASTER_BRANCH` | `master` | 上游原始配置分支 |
-| `DEVBRANCH` | `yily` | 用户自定义配置分支 |
-| `CONFDIR` | `/etc` | 配置文件目录 |
-| `BACKUP_DIR` | `/etc/custom_bak` | 用户配置备份目录 |
+| 脚本 | 说明 | 文档 |
+| --- | --- | --- |
+| `custom-update` | 使用 git 双分支模型管理 Gentoo `/etc` 配置更新，合并 Portage 生成的 `._cfg*` 文件和用户自定义修改 | [custom-update.md](custom-update.md) |
+| `auto_emerge` | 自动执行 Gentoo 更新流程，包含更新前 Btrfs snapshot、`emaint sync`、`emerge -uND world`、清理和重建 | [auto_emerge.md](auto_emerge.md) |
+| `btrfs-snapshot.sh` | 为 Btrfs 文件系统创建只读 snapshot，并按时间规则清理旧 snapshot | [btrfs-snapshot.md](btrfs-snapshot.md) |
+| `test-retention.sh` | 测试 `btrfs-snapshot.sh` 的 snapshot 保留策略 | [btrfs-snapshot.md](btrfs-snapshot.md) |
 
 ## 安装
 
@@ -181,7 +17,61 @@ Portage 更新 → /etc 下产生 ._cfg0000_xxx 候选文件
 make install
 ```
 
-将 `custom-update` 安装到 `/bin/` 目录下。
+默认安装到 `/bin`：
+
+- `/bin/custom-update`
+- `/bin/auto_emerge`
+- `/bin/btrfs-snapshot.sh`
+
+可以通过 `DESTDIR` 指定安装根目录：
+
+```bash
+make install DESTDIR=/usr/local
+```
+
+## 使用示例
+
+检查 `/etc` 下待处理的 Portage 配置更新：
+
+```bash
+custom-update -k
+```
+
+合并配置更新：
+
+```bash
+custom-update -u
+```
+
+执行 Gentoo 自动更新：
+
+```bash
+auto_emerge
+```
+
+手动创建根文件系统 snapshot：
+
+```bash
+btrfs-snapshot.sh --source /
+```
+
+## 依赖
+
+- Gentoo Linux
+- `bash`
+- `git`
+- `emerge` / `emaint`
+- `etc-update`
+- `btrfs-progs`
+- `systemctl`
+- `revdep-rebuild`
+
+## 注意事项
+
+- 多数脚本需要 root 权限运行。
+- `custom-update` 默认操作 `/etc`，并假定 `/etc` 已初始化为 git 仓库。
+- `auto_emerge` 会在更新前调用 `btrfs-snapshot.sh --source /`，因此 `btrfs-snapshot.sh` 需要在 `PATH` 中。
+- `btrfs-snapshot.sh` 会在目标文件系统下创建 `snapshots` 目录并清理符合规则的旧 snapshot。
 
 ## License
 

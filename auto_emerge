@@ -1,0 +1,63 @@
+#!/bin/bash
+
+LOG="/var/log/auto_update.log"
+LOCK="/var/lock/auto_update"
+
+log() {
+	echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG"
+}
+
+cleanup() {
+	rm -f "$LOCK"
+	log "auto update over"
+}
+trap cleanup EXIT
+
+log "auto update start"
+
+if [ -e "$LOCK" ]; then
+	OLD_PID=$(cat "$LOCK" 2>/dev/null)
+	if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+		log "auto update already running (pid $OLD_PID)"
+		exit 1
+	fi
+	rm -f "$LOCK"
+fi
+echo $$ > "$LOCK"
+
+if ! btrfs-snapshot.sh --source / >> "$LOG" 2>&1; then
+	log "auto update error : snapshot fail"
+	exit 1
+fi
+
+if ! emaint sync >> "$LOG" 2>&1; then
+	log "auto update error : sync fail"
+	exit 1
+fi
+
+if ! emerge -u portage >> "$LOG" 2>&1; then
+	log "auto update error : update portage fail"
+	exit 1
+fi
+
+if ! emerge -uND world >> "$LOG" 2>&1; then
+	log "auto update error : emerge world fail"
+	exit 1
+fi
+
+emerge --depclean >> "$LOG" 2>&1
+if [ $? -ne 0 ]; then
+	log "auto update warning : depclean fail, continuing"
+fi
+
+systemctl daemon-reload
+
+if ! emerge @preserved-rebuild >> "$LOG" 2>&1; then
+	log "auto update error : preserved-rebuild fail"
+	exit 1
+fi
+
+if ! revdep-rebuild >> "$LOG" 2>&1; then
+	log "auto update error : revdep-rebuild fail"
+	exit 1
+fi
