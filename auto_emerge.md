@@ -23,7 +23,7 @@
 更新前会调用：
 
 ```bash
-btrfs-snapshot.sh --source /
+portagit-snapshot --source /
 ```
 
 因此默认会为根文件系统创建 snapshot：
@@ -81,7 +81,7 @@ auto update error : revdep-rebuild fail
 
 以下步骤失败会立即退出：
 
-- `btrfs-snapshot.sh --source /`
+- `portagit-snapshot --source /`
 - `emaint sync`
 - `emerge -u portage`
 - `emerge -uND world`
@@ -93,7 +93,7 @@ auto update error : revdep-rebuild fail
 ## 依赖
 
 - `bash`
-- `btrfs-snapshot.sh`
+- `portagit-snapshot`
 - `emaint`
 - `emerge`
 - `systemctl`
@@ -118,4 +118,4 @@ less /var/log/auto_update.log
 - 更新前会自动创建根文件系统 snapshot
 - 如果已有更新任务正在运行，脚本不会重复执行
 - 该脚本适用于 Gentoo 系统更新流程
-- `btrfs-snapshot.sh` 需要在 `PATH` 中，或脚本中需要改为绝对路径调用
+- `portagit-snapshot` 需要在 `PATH` 中，或脚本中需要改为绝对路径调用

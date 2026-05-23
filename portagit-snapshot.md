@@ -1,11 +1,11 @@
-# btrfs-snapshot.sh
+# portagit-snapshot
 
-`btrfs-snapshot.sh` 用于为指定 Btrfs 文件系统创建只读 snapshot，并按时间规则清理旧 snapshot。
+`portagit-snapshot` 用于为指定 Btrfs 文件系统创建只读 snapshot，并按时间规则清理旧 snapshot。
 
 ## 用法
 
 ```bash
-btrfs-snapshot.sh [--source PATH] [--dry-run] [--plan-retention] [--now "YYYY-MM-DD HH:MM:SS"]
+portagit-snapshot [--source PATH] [--dry-run] [--plan-retention] [--now "YYYY-MM-DD HH:MM:SS"]
 ```
 
 ## 选项
@@ -38,19 +38,19 @@ snapshot-YYYY-MM-DD_HHMMSS
 为根文件系统创建 snapshot：
 
 ```bash
-btrfs-snapshot.sh --source /
+portagit-snapshot --source /
 ```
 
 为 `/home` 创建 snapshot：
 
 ```bash
-btrfs-snapshot.sh --source /home
+portagit-snapshot --source /home
 ```
 
 预览将要执行的操作：
 
 ```bash
-btrfs-snapshot.sh --source /home --dry-run
+portagit-snapshot --source /home --dry-run
 ```
 
 ## 保留策略
@@ -79,7 +79,7 @@ MIN_ARCHIVE_INTERVAL_DAYS=30
 printf '%s\n' \
   /snapshots/snapshot-2026-04-20_000000 \
   /snapshots/snapshot-2026-04-01_000000 \
-| btrfs-snapshot.sh --plan-retention --now "2026-05-23 00:00:00"
+| portagit-snapshot --plan-retention --now "2026-05-23 00:00:00"
 ```
 
 输出：

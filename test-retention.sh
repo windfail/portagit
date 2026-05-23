@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-SCRIPT="./btrfs-snapshot.sh"
+SCRIPT="./portagit-snapshot"
 NOW="2026-05-23 00:00:00"
 
 run_case() {
