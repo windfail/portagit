@@ -42,12 +42,19 @@ portagit-snapshot --source /
 /var/log/auto_update.log
 ```
 
-脚本会把主要命令输出追加到该日志中。
+脚本只把 snapshot 与 `emaint sync` 的输出追加到该日志中，
+`emerge`、`revdep-rebuild` 等构建过程的输出会被丢弃，
+日志中只记录其执行结果。
 
 常见日志示例：
 
 ```text
 2026-05-23 09:00:00 auto update start
+2026-05-23 09:01:00 auto update : update portage ok
+2026-05-23 09:05:00 auto update : emerge world ok
+2026-05-23 09:06:00 auto update : depclean ok
+2026-05-23 09:07:00 auto update : preserved-rebuild ok
+2026-05-23 09:09:00 auto update : revdep-rebuild ok
 2026-05-23 09:10:00 auto update over
 ```
 

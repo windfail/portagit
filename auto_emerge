@@ -35,29 +35,34 @@ if ! emaint sync >> "$LOG" 2>&1; then
 	exit 1
 fi
 
-if ! emerge -u portage >> "$LOG" 2>&1; then
+if ! emerge -u portage >/dev/null 2>&1; then
 	log "auto update error : update portage fail"
 	exit 1
 fi
+log "auto update : update portage ok"
 
-if ! emerge -uND world >> "$LOG" 2>&1; then
+if ! emerge -uND world >/dev/null 2>&1; then
 	log "auto update error : emerge world fail"
 	exit 1
 fi
+log "auto update : emerge world ok"
 
-emerge --depclean >> "$LOG" 2>&1
-if [ $? -ne 0 ]; then
+if ! emerge --depclean >/dev/null 2>&1; then
 	log "auto update warning : depclean fail, continuing"
+else
+	log "auto update : depclean ok"
 fi
 
 systemctl daemon-reload
 
-if ! emerge @preserved-rebuild >> "$LOG" 2>&1; then
+if ! emerge @preserved-rebuild >/dev/null 2>&1; then
 	log "auto update error : preserved-rebuild fail"
 	exit 1
 fi
+log "auto update : preserved-rebuild ok"
 
-if ! revdep-rebuild >> "$LOG" 2>&1; then
+if ! revdep-rebuild >/dev/null 2>&1; then
 	log "auto update error : revdep-rebuild fail"
 	exit 1
 fi
+log "auto update : revdep-rebuild ok"
