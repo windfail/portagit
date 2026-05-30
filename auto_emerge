@@ -30,6 +30,12 @@ if ! portagit-snapshot --source / >> "$LOG" 2>&1; then
 	exit 1
 fi
 
+if ! grub-mkconfig -o /boot/grub/grub.cfg >> "$LOG" 2>&1; then
+	log "auto update warning : grub-mkconfig fail after snapshot"
+else
+	log "auto update : grub menu refreshed after snapshot"
+fi
+
 if ! emaint sync >> "$LOG" 2>&1; then
 	log "auto update error : sync fail"
 	exit 1

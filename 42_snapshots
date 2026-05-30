@@ -1,0 +1,47 @@
+#!/bin/bash
+# /etc/grub.d/42_snapshots
+# Generate GRUB menu entries for emergency boot into btrfs snapshots
+# created by portagit-snapshot. All snapshots are read-only.
+set -e
+
+SNAPSHOT_ROOT="/snapshots"
+
+ROOT_UUID=$(findmnt -no UUID / 2>/dev/null || true)
+[ -z "$ROOT_UUID" ] && exit 0
+
+shopt -s nullglob
+snaps=( "${SNAPSHOT_ROOT}"/snapshot-* )
+[ ${#snaps[@]} -eq 0 ] && exit 0
+
+mapfile -t sorted < <(ls -1dt "${snaps[@]}")
+
+cat <<'HEAD'
+submenu '[SNAPSHOT-RO] Emergency boot from btrfs snapshots' --class snapshot --class gnu-linux --class gnu --class os {
+HEAD
+
+for snap in "${sorted[@]}"; do
+    name=$(basename "$snap")
+    subvol="snapshots/${name}"
+    kfile=$(readlink -f "${snap}/boot/vmlinuz" 2>/dev/null || true)
+    [ -z "$kfile" ] && continue
+    [ ! -f "$kfile" ] && continue
+    kbase=$(basename "$kfile")
+    kver=${kbase#vmlinuz-}
+    kpath="/snapshots/${name}/boot/${kbase}"
+
+    cat <<EOF
+    menuentry '[SNAPSHOT-RO] ${name}  (kernel ${kver})' --class snapshot --class gnu-linux --class gnu --class os {
+        load_video
+        insmod gzio
+        insmod part_gpt
+        insmod btrfs
+        search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
+        echo 'Loading snapshot ${name} with kernel ${kver} (read-only) ...'
+        linux ${kpath} root=UUID=${ROOT_UUID} ro rootflags=subvol=${subvol} init=/usr/lib/systemd/systemd
+    }
+EOF
+done
+
+cat <<'TAIL'
+}
+TAIL
