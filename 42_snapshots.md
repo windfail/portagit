@@ -15,18 +15,52 @@
 拼接进 `/boot/grub/grub.cfg`。`42_snapshots` 的逻辑：
 
 1. 通过 `findmnt -no UUID /` 动态获取根文件系统 UUID。
-2. 扫描 `/snapshots/snapshot-*`，按 mtime 倒序排列（最新在前）。
-3. 解析每个 snapshot 内 `/boot/vmlinuz` 符号链接得到当时的内核版本与文件名。
-4. 输出一个 `submenu` 块，每个 snapshot 对应一个 `menuentry`，菜单文案带
-   `[SNAPSHOT-RO]` 前缀以便在 GRUB 界面中识别。
+2. 检测 `/boot` 是否为独立分区（`findmnt -no TARGET /boot` 等于 `/boot`）。
+3. 扫描 `/snapshots/snapshot-*`，按 mtime 倒序排列（最新在前）。
+4. 根据检测结果生成 menuentry，若无有效条目则不输出（避免空的 submenu 导致
+   GRUB 语法错误）。
 
-GRUB 启动 snapshot 的内核命令行：
+### `/boot` 为独立分区
+
+当 `/boot` 挂载在独立分区（如 ext4）时，btrfs snapshot 不包含 `/boot` 内容，
+内核和 initramfs 位于 `/boot` 分区。脚本：
+
+- 从 `/boot` 分区获取 UUID 和文件系统类型，用于 GRUB 的 `search` 和 `insmod`。
+- 使用 `/boot/vmlinuz` 符号链接指向的当前内核，搭配对应的 initramfs。
+- `search` 定位 `/boot` 分区，内核和 initramfs 路径相对于该分区根目录。
+
+GRUB 启动命令行：
 
 ```
-linux /snapshots/<name>/boot/<vmlinuz> root=UUID=<UUID> ro rootflags=subvol=snapshots/<name> init=/usr/lib/systemd/systemd
+search --no-floppy --fs-uuid --set=root <BOOT_UUID>
+linux /vmlinuz-<ver> root=UUID=<ROOT_UUID> ro rootflags=subvol=snapshots/<name> init=/usr/lib/systemd/systemd
+initrd /initramfs-<ver>.img
+```
+
+注意：snapshot 使用的是**当前** `/boot` 中的内核，而非 snapshot 创建时的内核。
+如果 snapshot 创建后内核已升级，snapshot 内的内核模块可能与启动内核不匹配。
+应急恢复时应优先使用较新的 snapshot。
+
+### `/boot` 非独立分区
+
+当 `/boot` 与 `/` 在同一 btrfs 子卷时，snapshot 包含完整的 `/boot` 内容：
+
+- 从 `${snap}/boot/vmlinuz` 符号链接解析当时的内核版本与文件名。
+- 检测 `${snap}/boot/initramfs.img`，存在则添加 `initrd` 行。
+- `search` 定位根 btrfs 分区，内核路径带 `/snapshots/<name>/boot/` 前缀。
+
+GRUB 启动命令行：
+
+```
+search --no-floppy --fs-uuid --set=root <ROOT_UUID>
+linux /snapshots/<name>/boot/<vmlinuz> root=UUID=<ROOT_UUID> ro rootflags=subvol=snapshots/<name> init=/usr/lib/systemd/systemd
+initrd /snapshots/<name>/boot/<initramfs>
 ```
 
 - 使用 snapshot 内 `/boot` 里当时的内核文件（与 snapshot 时刻的内核模块匹配）。
+
+### 通用
+
 - `rootflags=subvol=snapshots/<name>` 把 snapshot 子卷挂载为根。
 - 使用 `ro` 是因为 snapshot 是只读 subvolume，无法 `rw` 挂载（见下文应急转可写）。
 
@@ -118,8 +152,8 @@ sudo grub-mkconfig -o /boot/grub/grub.cfg
 ## 已知限制
 
 - 只读 snapshot 启动后无法直接修改根文件系统，需先按上文克隆可写副本。
-- 内核命令行不包含 initrd —— 当前系统使用静态编译内核，无 initramfs。
-  若将来引入 initramfs，需要在 `42_snapshots` 的 `menuentry` 中增加
-  `initrd /snapshots/<name>/boot/initramfs-<ver>` 行。
+- 当 `/boot` 为独立分区时，snapshot 使用当前 `/boot` 中的内核而非 snapshot
+  创建时的内核；若内核已升级，可能出现模块不匹配。应急时应优先选择较新的
+  snapshot，或确保 `/boot` 中保留旧内核。
 - 菜单条目数量等于 `/snapshots/snapshot-*` 数量；如需限制，可在脚本的
   `sorted` 数组生成后增加 `sorted=("${sorted[@]:0:N}")` 截断。

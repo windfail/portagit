@@ -15,22 +15,68 @@ snaps=( "${SNAPSHOT_ROOT}"/snapshot-* )
 
 mapfile -t sorted < <(ls -1dt "${snaps[@]}")
 
-cat <<'HEAD'
-submenu '[SNAPSHOT-RO] Emergency boot from btrfs snapshots' --class snapshot --class gnu-linux --class gnu --class os {
-HEAD
+SEPARATE_BOOT=false
+BOOT_MOUNT=$(findmnt -no TARGET /boot 2>/dev/null || true)
+if [ "$BOOT_MOUNT" = "/boot" ]; then
+    SEPARATE_BOOT=true
+    BOOT_UUID=$(findmnt -no UUID /boot 2>/dev/null || true)
+    [ -z "$BOOT_UUID" ] && exit 0
+    BOOT_FSTYPE=$(findmnt -no FSTYPE /boot 2>/dev/null || true)
+    case "$BOOT_FSTYPE" in
+        ext2|ext3|ext4) BOOT_MOD="ext2" ;;
+        btrfs)          BOOT_MOD="btrfs" ;;
+        xfs)            BOOT_MOD="xfs" ;;
+        vfat)           BOOT_MOD="fat" ;;
+        *)              BOOT_MOD="ext2" ;;
+    esac
+fi
 
-for snap in "${sorted[@]}"; do
-    name=$(basename "$snap")
-    subvol="snapshots/${name}"
-    kfile=$(readlink -f "${snap}/boot/vmlinuz" 2>/dev/null || true)
-    [ -z "$kfile" ] && continue
-    [ ! -f "$kfile" ] && continue
-    kbase=$(basename "$kfile")
-    kver=${kbase#vmlinuz-}
-    kpath="/snapshots/${name}/boot/${kbase}"
+entries=()
 
-    cat <<EOF
-    menuentry '[SNAPSHOT-RO] ${name}  (kernel ${kver})' --class snapshot --class gnu-linux --class gnu --class os {
+if $SEPARATE_BOOT; then
+    ktarget=$(readlink /boot/vmlinuz 2>/dev/null || true)
+    [ -z "$ktarget" ] && exit 0
+    [ ! -f "/boot/${ktarget}" ] && exit 0
+    kver=${ktarget#vmlinuz-}
+
+    itarget="initramfs-${kver}.img"
+    initrd_line=""
+    if [ -f "/boot/${itarget}" ]; then
+        initrd_line="        initrd /${itarget}"
+    fi
+
+    for snap in "${sorted[@]}"; do
+        name=$(basename "$snap")
+        subvol="snapshots/${name}"
+        entries+=("    menuentry '[SNAPSHOT-RO] ${name}  (kernel ${kver})' --class snapshot --class gnu-linux --class gnu --class os {
+        load_video
+        insmod gzio
+        insmod part_gpt
+        insmod ${BOOT_MOD}
+        search --no-floppy --fs-uuid --set=root ${BOOT_UUID}
+        echo 'Loading snapshot ${name} with kernel ${kver} (read-only) ...'
+        linux /${ktarget} root=UUID=${ROOT_UUID} ro rootflags=subvol=${subvol} init=/usr/lib/systemd/systemd
+${initrd_line}
+    }")
+    done
+else
+    for snap in "${sorted[@]}"; do
+        name=$(basename "$snap")
+        subvol="snapshots/${name}"
+        kfile=$(readlink -f "${snap}/boot/vmlinuz" 2>/dev/null || true)
+        [ -z "$kfile" ] && continue
+        [ ! -f "$kfile" ] && continue
+        kbase=$(basename "$kfile")
+        kver=${kbase#vmlinuz-}
+        kpath="/snapshots/${name}/boot/${kbase}"
+        ifile=$(readlink -f "${snap}/boot/initramfs.img" 2>/dev/null || true)
+        initrd_line=""
+        if [ -n "$ifile" ] && [ -f "$ifile" ]; then
+            ibase=$(basename "$ifile")
+            ipath="/snapshots/${name}/boot/${ibase}"
+            initrd_line="        initrd ${ipath}"
+        fi
+        entries+=("    menuentry '[SNAPSHOT-RO] ${name}  (kernel ${kver})' --class snapshot --class gnu-linux --class gnu --class os {
         load_video
         insmod gzio
         insmod part_gpt
@@ -38,8 +84,19 @@ for snap in "${sorted[@]}"; do
         search --no-floppy --fs-uuid --set=root ${ROOT_UUID}
         echo 'Loading snapshot ${name} with kernel ${kver} (read-only) ...'
         linux ${kpath} root=UUID=${ROOT_UUID} ro rootflags=subvol=${subvol} init=/usr/lib/systemd/systemd
-    }
-EOF
+${initrd_line}
+    }")
+    done
+fi
+
+[ ${#entries[@]} -eq 0 ] && exit 0
+
+cat <<'HEAD'
+submenu '[SNAPSHOT-RO] Emergency boot from btrfs snapshots' --class snapshot --class gnu-linux --class gnu --class os {
+HEAD
+
+for entry in "${entries[@]}"; do
+    printf '%s\n' "$entry"
 done
 
 cat <<'TAIL'
